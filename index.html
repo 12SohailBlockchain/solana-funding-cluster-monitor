@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Solana Funding-Cluster Monitoring — Project Demo</title>
+  <meta name="description" content="Demo: Detect parent→child funding clusters on Solana, track child wallet swaps, and surface live session stats." />
+  <meta property="og:title" content="Solana Funding-Cluster Monitoring — Project Demo" />
+  <meta property="og:description" content="Python (FastAPI) + Helius + Next.js dashboard for tracking parent→child funding clusters and child swap activity." />
+  <style>
+    :root{
+      --bg: #0b1020;          /* deep navy */
+      --panel: #11162a;       /* panel */
+      --soft: #1a2140;        /* softer panel */
+      --text: #e6e9f2;        /* primary text */
+      --muted: #a6b0cf;       /* secondary text */
+      --brand: #7c5cff;       /* accent */
+      --good: #2bd17e;
+      --warn: #ffb020;
+      --bad:  #ff5470;
+      --chip-bg: rgba(124,92,255,0.18);
+      --ring: rgba(124,92,255,0.45);
+      --shadow: 0 20px 60px rgba(0,0,0,.35), 0 8px 24px rgba(124,92,255,.08);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(124,92,255,.25), transparent 60%),
+        radial-gradient(900px 500px at 90% 10%, rgba(43,209,126,.15), transparent 60%),
+        var(--bg);
+      color:var(--text);
+      letter-spacing:.2px;
+    }
+    a{color:var(--text); text-decoration:none}
+    .container{max-width:1180px; padding:28px; margin:0 auto}
+    .nav{
+      display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px
+    }
+    .brand{display:flex; align-items:center; gap:10px}
+    .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),#00d4ff);box-shadow:0 8px 24px rgba(124,92,255,.4)}
+    .brand h1{font-size:18px; margin:0}
+    .nav-actions{display:flex; gap:10px; align-items:center}
+    .btn{padding:10px 14px; border-radius:12px; background:var(--panel); border:1px solid rgba(255,255,255,.06); color:var(--text); cursor:pointer}
+    .btn.primary{background:linear-gradient(135deg,var(--brand),#00d4ff); color:#0b0f1a; font-weight:700; border:none}
+    .btn.ghost{background:transparent; border:1px solid rgba(255,255,255,.12)}
+    .toggle{display:inline-flex; gap:10px; align-items:center; opacity:.9}
+
+    .hero{
+      display:grid; grid-template-columns: 1.2fr .8fr; gap:24px; align-items:center; margin:20px 0 28px
+    }
+    .card{background:linear-gradient(180deg,var(--panel),var(--soft)); border:1px solid rgba(255,255,255,.06); border-radius:20px; box-shadow:var(--shadow)}
+    .hero .card{padding:26px}
+    .hero h2{font-size:32px; margin:0 0 8px}
+    .hero p{color:var(--muted); margin:0 0 14px}
+    .chips{display:flex; flex-wrap:wrap; gap:10px; margin:14px 0 18px}
+    .chip{font-size:12px; padding:6px 10px; border-radius:999px; background:var(--chip-bg); border:1px solid rgba(124,92,255,.35)}
+
+    .grid{display:grid; grid-template-columns: 1fr 1fr; gap:20px}
+    .section{padding:22px}
+    .section h3{margin:0 0 12px; font-size:18px}
+    .muted{color:var(--muted)}
+
+    .kv{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
+    .kv .k{color:var(--muted)}
+    .kv .v{font-weight:600}
+
+    /* Sessions table */
+    .toolbar{display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px}
+    .input{background:#0d1326; border:1px solid rgba(255,255,255,.08); color:var(--text); padding:10px 12px; border-radius:12px; width:280px}
+    .select{background:#0d1326; border:1px solid rgba(255,255,255,.08); color:var(--text); padding:10px 12px; border-radius:12px}
+
+    table{width:100%; border-collapse:separate; border-spacing:0 8px}
+    thead th{font-size:12px; text-transform:uppercase; letter-spacing:.9px; color:var(--muted); text-align:left; padding:0 14px}
+    tbody tr{background:var(--panel)}
+    tbody tr td{padding:14px; border-top:1px solid rgba(255,255,255,.06); border-bottom:1px solid rgba(255,255,255,.06)}
+    tbody tr td:first-child{border-left:1px solid rgba(255,255,255,.06); border-top-left-radius:14px; border-bottom-left-radius:14px}
+    tbody tr td:last-child{border-right:1px solid rgba(255,255,255,.06); border-top-right-radius:14px; border-bottom-right-radius:14px}
+
+    .status{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; font-size:12px; font-weight:600}
+    .status.open{background:rgba(124,92,255,.18); border:1px solid var(--ring)}
+    .status.active{background:rgba(43,209,126,.15); border:1px solid rgba(43,209,126,.4)}
+    .status.complete{background:rgba(255,84,112,.12); border:1px solid rgba(255,84,112,.35)}
+
+    .badge{display:inline-block; font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.04)}
+
+    details.session{
+      margin-top:8px; border:1px solid rgba(255,255,255,.08); border-radius:14px; overflow:hidden
+    }
+    details>summary{
+      cursor:pointer; list-style:none; background:var(--soft); padding:12px 14px; display:flex; align-items:center; justify-content:space-between
+    }
+    details>summary::-webkit-details-marker{display:none}
+    .children{padding:14px; display:grid; gap:12px}
+
+    .child-card{display:grid; grid-template-columns: 1.1fr .7fr .7fr .7fr .7fr; gap:10px; padding:12px; background:var(--panel); border:1px solid rgba(255,255,255,.06); border-radius:12px}
+
+    code, pre{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+    pre{background:#0d1326; border:1px solid rgba(255,255,255,.08); padding:14px; border-radius:12px; overflow:auto}
+
+    .arch{display:flex; align-items:center; justify-content:center; background:var(--soft); border:1px solid rgba(255,255,255,.06); border-radius:16px; padding:10px}
+    .arch svg{max-width:100%; height:auto}
+
+    .footer{margin:28px 0 10px; padding:18px; text-align:center; color:var(--muted)}
+
+    @media (max-width: 960px){
+      .hero{grid-template-columns: 1fr}
+      .grid{grid-template-columns:1fr}
+      .child-card{grid-template-columns:1fr 1fr}
+      .input{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- NAV -->
+    <div class="nav">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <h1>Sohail • Web3 Engineering</h1>
+      </div>
+      <div class="nav-actions">
+        <button class="btn ghost" id="modeToggle" aria-label="Toggle theme">🌗 Theme</button>
+        <a class="btn primary" href="#contact">Contact</a>
+      </div>
+    </div>
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="card">
+        <h2>Solana Funding-Cluster Monitoring</h2>
+        <p class="muted">Detect parent wallets funding multiple child wallets, track child swaps in real time, and surface actionable session insights for fast decisions.</p>
+        <div class="chips" aria-label="Tech stack chips">
+          <span class="chip">Python · FastAPI</span>
+          <span class="chip">Helius Enhanced APIs</span>
+          <span class="chip">Solana RPC</span>
+          <span class="chip">Next.js · React</span>
+          <span class="chip">Postgres · Redis</span>
+          <span class="chip">WebSockets/SSE</span>
+        </div>
+        <div class="grid" style="margin-top:8px">
+          <div class="kv">
+            <div class="k">Funding threshold</div>
+            <div class="v">≥ 5 child wallets / window</div>
+            <div class="k">Poll cadence</div>
+            <div class="v">10–30s (configurable)</div>
+            <div class="k">Sort & filter</div>
+            <div class="v">By total SOL funded · Token filter</div>
+            <div class="k">Session status</div>
+            <div class="v"><span class="badge">open</span> <span class="badge">active</span> <span class="badge">complete</span></div>
+          </div>
+          <div class="card" style="padding:16px">
+            <div class="muted" style="margin-bottom:8px">At a glance</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px">
+              <div class="card" style="padding:12px; text-align:center">
+                <div class="muted" style="font-size:12px">Live sessions</div>
+                <div style="font-weight:800; font-size:22px" id="liveCount">–</div>
+              </div>
+              <div class="card" style="padding:12px; text-align:center">
+                <div class="muted" style="font-size:12px">Total SOL funded</div>
+                <div style="font-weight:800; font-size:22px" id="totalFunded">–</div>
+              </div>
+              <div class="card" style="padding:12px; text-align:center">
+                <div class="muted" style="font-size:12px">Top token today</div>
+                <div style="font-weight:800; font-size:22px" id="topToken">–</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+          <a href="#demo" class="btn primary">View demo table</a>
+          <a href="#architecture" class="btn">See architecture</a>
+        </div>
+      </div>
+      <div class="card section">
+        <h3>What this dashboard delivers</h3>
+        <ul class="muted">
+          <li>Detects <strong>parent → child</strong> funding clusters in a sliding window</li>
+          <li>Tracks child wallet <strong>buy/sell</strong> activity (DEX swaps)</li>
+          <li>Computes session stats: total SOL funded/spent, tokens, avg time between swaps, <em>ETA</em></li>
+          <li>Filter by token, sort by largest total SOL funded (desc), expandable details</li>
+          <li>Built for reliability: dedup by signature, backfill on restart, resilient polling</li>
+        </ul>
+        <div class="muted" style="margin-top:10px; font-size:13px">Note: This page shows a <em>static demo</em> of the live UI you’ll receive.</div>
+      </div>
+    </section>
+
+    <!-- DEMO TABLE -->
+    <section id="demo" class="card section" aria-labelledby="demoTitle">
+      <div class="toolbar">
+        <h3 id="demoTitle">Sessions (demo)</h3>
+        <div style="display:flex; gap:10px; align-items:center">
+          <input id="tokenFilter" class="input" placeholder="Filter by token (e.g., BONK)" aria-label="Filter by token" />
+          <select id="sortBy" class="select" aria-label="Sort by">
+            <option value="funded">Sort: Total SOL funded (desc)</option>
+            <option value="spent">Sort: Total SOL spent (desc)</option>
+            <option value="recent">Sort: Most recent</option>
+          </select>
+        </div>
+      </div>
+      <table role="table" aria-describedby="demoTitle">
+        <thead><tr>
+          <th>Parent</th>
+          <th>Total SOL funded</th>
+          <th>SOL spent</th>
+          <th>Tokens</th>
+          <th>Avg gap</th>
+          <th>ETA</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody id="sessionsBody"></tbody>
+      </table>
+      <div id="detailsHost"></div>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section id="architecture" class="grid" style="margin-top:20px">
+      <div class="card section">
+        <h3>Architecture (delivery plan)</h3>
+        <div class="arch" aria-hidden="true">
+          <svg viewBox="0 0 900 340" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stop-color="#7c5cff"/>
+                <stop offset="100%" stop-color="#00d4ff"/>
+              </linearGradient>
+            </defs>
+            <rect x="10" y="20" width="200" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="110" y="55" text-anchor="middle" fill="#e6e9f2" font-size="14">Solana Network</text>
+            <text x="110" y="75" text-anchor="middle" fill="#a6b0cf" font-size="12">Transfers & Swaps</text>
+
+            <rect x="240" y="20" width="220" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="350" y="55" text-anchor="middle" fill="#e6e9f2" font-size="14">Helius Enhanced APIs</text>
+            <text x="350" y="75" text-anchor="middle" fill="#a6b0cf" font-size="12">decoded events</text>
+
+            <rect x="490" y="20" width="190" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="585" y="55" text-anchor="middle" fill="#e6e9f2" font-size="14">Python / FastAPI</text>
+            <text x="585" y="75" text-anchor="middle" fill="#a6b0cf" font-size="12">poller + detector</text>
+
+            <rect x="710" y="20" width="180" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="800" y="55" text-anchor="middle" fill="#e6e9f2" font-size="14">Next.js Dashboard</text>
+            <text x="800" y="75" text-anchor="middle" fill="#a6b0cf" font-size="12">SSE / WebSocket</text>
+
+            <!-- Data stores -->
+            <rect x="540" y="220" width="120" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="600" y="255" text-anchor="middle" fill="#e6e9f2" font-size="14">Redis</text>
+            <text x="600" y="275" text-anchor="middle" fill="#a6b0cf" font-size="12">sliding window</text>
+
+            <rect x="360" y="220" width="140" height="80" rx="12" fill="#151b34" stroke="rgba(255,255,255,.18)"/>
+            <text x="430" y="255" text-anchor="middle" fill="#e6e9f2" font-size="14">Postgres</text>
+            <text x="430" y="275" text-anchor="middle" fill="#a6b0cf" font-size="12">sessions, swaps</text>
+
+            <!-- Arrows -->
+            <path d="M210 60 L240 60" stroke="url(#g1)" stroke-width="3"/>
+            <path d="M460 60 L490 60" stroke="url(#g1)" stroke-width="3"/>
+            <path d="M680 60 L710 60" stroke="url(#g1)" stroke-width="3"/>
+            <path d="M585 100 L585 220" stroke="url(#g1)" stroke-width="3"/>
+            <path d="M490 60 C490 140 430 140 430 220" stroke="url(#g1)" stroke-width="3"/>
+          </svg>
+        </div>
+        <p class="muted" style="margin-top:10px">Decoded events flow from Helius → FastAPI detector → Redis/Postgres → live UI.</p>
+      </div>
+      <div class="card section">
+        <h3>Detection rules</h3>
+        <ul class="muted">
+          <li><strong>Open session</strong> when one parent funds ≥ 5 unique children within the configured window.</li>
+          <li><strong>Active</strong> after the first child swap is observed.</li>
+          <li><strong>Complete</strong> when spend halts for X minutes or funded ≈ spent.</li>
+          <li>Deduplicate by signature; backfill last 30–60 min on restart.</li>
+        </ul>
+        <h3 style="margin-top:16px">Schema & API (sample)</h3>
+        <pre><code>// Schema (Postgres)
+CREATE TABLE sessions (
+  id UUID PRIMARY KEY,
+  parent TEXT NOT NULL,
+  started_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  unique_children INT,
+  total_sol_funded NUMERIC,
+  total_sol_spent NUMERIC,
+  avg_swap_gap_sec INT,
+  est_time_to_complete INT,
+  status TEXT
+);
+
+// FastAPI endpoints
+GET /sessions?token=BONK&sort=funded_desc
+GET /sessions/{id}
+GET /stream   // server-sent events for live updates</code></pre>
+      </div>
+    </section>
+
+    <!-- DELIVERY -->
+    <section class="grid" style="margin-top:20px">
+      <div class="card section">
+        <h3>Delivery & What you’ll get</h3>
+        <ul class="muted">
+          <li>Deployed dashboard (URL) + source code (backend & frontend) + README</li>
+          <li>Configurable thresholds via <code>.env</code></li>
+          <li>Basic alerts for unusually large sessions</li>
+        </ul>
+      </div>
+      <div class="card section">
+        <h3>Kickoff inputs</h3>
+        <ul class="muted">
+          <li>Helius API key (or permission for me to provision one)</li>
+          <li>Thresholds: window length (e.g., 5–10m), min children (default 5)</li>
+          <li>Any tokens to highlight by default; hosting preference</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ABOUT -->
+    <section id="contact" class="card section" style="margin-top:20px">
+      <h3>About & Contact</h3>
+      <p class="muted">I’m <strong>Sohail Ahmed</strong>, a Senior Blockchain Engineer. I build production-grade Solana/EVM data pipelines and real-time dashboards (FastAPI + Next.js), with on-chain parsing and UX that surfaces the signal fast.</p>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px">
+        <a class="btn primary" href="#" onclick="alert('Thanks! I\'ll follow up with a timeline & access checklist.')">Start project</a>
+        <a class="btn" href="#demo">Preview demo</a>
+      </div>
+    </section>
+
+    <div class="footer">© <span id="year"></span> Sohail Ahmed · Demo for client review</div>
+  </div>
+
+  <script>
+    // --- Theme toggle ---
+    const toggleBtn = document.getElementById('modeToggle');
+    let dark = true;
+    toggleBtn?.addEventListener('click', () => {
+      dark = !dark;
+      document.documentElement.style.filter = dark ? 'none' : 'invert(1) hue-rotate(180deg)';
+    });
+
+    // --- Mock demo data (static) ---
+    const sessions = [
+      {
+        id: 'a1', parent: '7R9o...WkHq', funded: 128.4, spent: 86.1, tokens:['BONK','SOL','USDC'], avgGap: 62, eta: 18, status:'active',
+        last: Date.now()-60*1000,
+        children:[
+          {addr:'8Hy...3nQ', recv:12, spent:9.7, first:Date.now()-50*60*1000, last:Date.now()-70*1000},
+          {addr:'4Sx...1dZ', recv:11, spent:8.5, first:Date.now()-49*60*1000, last:Date.now()-90*1000},
+          {addr:'9Qa...2kL', recv:10, spent:7.1, first:Date.now()-48*60*1000, last:Date.now()-120*1000},
+          {addr:'C2p...5aa', recv:9,  spent:8.3, first:Date.now()-46*60*1000, last:Date.now()-100*1000},
+          {addr:'Gs4...7yY', recv:8,  spent:6.1, first:Date.now()-45*60*1000, last:Date.now()-80*1000},
+        ]
+      },
+      {
+        id: 'b2', parent: 'FZ1k...a8pv', funded: 203.9, spent: 199.2, tokens:['SOL','JUP'], avgGap: 45, eta: 3, status:'complete',
+        last: Date.now()-30*60*1000,
+        children:[
+          {addr:'Hk2...6pQ', recv:40, spent:39.9, first:Date.now()-3*60*60*1000, last:Date.now()-40*60*1000},
+          {addr:'2Kp...9Vd', recv:40, spent:40.1, first:Date.now()-3*60*60*1000, last:Date.now()-42*60*1000},
+          {addr:'5Ar...2Qw', recv:40, spent:39.4, first:Date.now()-3*60*60*1000, last:Date.now()-41*60*1000},
+          {addr:'7Qe...7Yt', recv:40, spent:40.0, first:Date.now()-3*60*60*1000, last:Date.now()-41*60*1000},
+          {addr:'9Wm...5Ku', recv:43.9, spent:39.8, first:Date.now()-3*60*60*1000, last:Date.now()-40*60*1000},
+        ]
+      },
+      {
+        id: 'c3', parent: '9P3x...Qm1n', funded: 76.3, spent: 12.4, tokens:['WIF','BONK'], avgGap: 90, eta: 80, status:'open',
+        last: Date.now()-5*60*1000,
+        children:[
+          {addr:'B7v...1kK', recv:15, spent:2.1, first:Date.now()-25*60*1000, last:Date.now()-10*60*1000},
+          {addr:'E6q...5Zz', recv:15, spent:3.2, first:Date.now()-25*60*1000, last:Date.now()-9*60*1000},
+          {addr:'M1a...7Lp', recv:15, spent:2.8, first:Date.now()-25*60*1000, last:Date.now()-8*60*1000},
+          {addr:'P9d...4Fr', recv:15, spent:2.2, first:Date.now()-25*60*1000, last:Date.now()-7*60*1000},
+          {addr:'Z3s...9Xy', recv:16.3, spent:2.1, first:Date.now()-25*60*1000, last:Date.now()-6*60*1000},
+        ]
+      }
+    ];
+
+    const body = document.getElementById('sessionsBody');
+    const detailsHost = document.getElementById('detailsHost');
+
+    const fmt = n => n.toLocaleString(undefined,{maximumFractionDigits:2});
+    const gap = s => (s>=60? Math.round(s/60)+'m': s+'s');
+
+    function render(list){
+      body.innerHTML = '';
+      detailsHost.innerHTML = '';
+      list.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><span class="badge">${s.parent}</span></td>
+          <td>${fmt(s.funded)}</td>
+          <td>${fmt(s.spent)}</td>
+          <td>${s.tokens.map(t=>`<span class="badge">${t}</span>`).join(' ')}</td>
+          <td>${gap(s.avgGap)}</td>
+          <td>${s.eta}m</td>
+          <td><span class="status ${s.status}">${s.status}</span></td>
+        `;
+        body.appendChild(tr);
+
+        const d = document.createElement('details');
+        d.className = 'session';
+        d.innerHTML = `
+          <summary>
+            <div>
+              <strong>Session ${s.id}</strong> · Children: ${s.children.length} · Last update: ${new Date(s.last).toLocaleTimeString()}
+            </div>
+            <div class="muted">click to expand</div>
+          </summary>
+          <div class="children" role="list">
+            ${s.children.map(c => `
+              <div class="child-card" role="listitem">
+                <div><div class="muted">Child</div><div>${c.addr}</div></div>
+                <div><div class="muted">Received</div><div>${fmt(c.recv)} SOL</div></div>
+                <div><div class="muted">Spent</div><div>${fmt(c.spent)} SOL</div></div>
+                <div><div class="muted">First</div><div>${new Date(c.first).toLocaleTimeString()}</div></div>
+                <div><div class="muted">Last</div><div>${new Date(c.last).toLocaleTimeString()}</div></div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+        detailsHost.appendChild(d);
+      });
+
+      // Update hero KPIs
+      document.getElementById('liveCount').textContent = list.filter(s=>s.status!=='complete').length;
+      document.getElementById('totalFunded').textContent = fmt(list.reduce((a,b)=>a+b.funded,0))+' SOL';
+      const tok = list.flatMap(s=>s.tokens).reduce((acc,t)=>{acc[t]=(acc[t]||0)+1;return acc},{});
+      const top = Object.entries(tok).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
+      document.getElementById('topToken').textContent = top;
+    }
+
+    function applyControls(){
+      const token = document.getElementById('tokenFilter').value.trim().toUpperCase();
+      const sortBy = document.getElementById('sortBy').value;
+      let list = sessions.filter(s => token? s.tokens.some(t=>t.includes(token)) : true);
+      if (sortBy==='funded') list.sort((a,b)=>b.funded-a.funded);
+      if (sortBy==='spent') list.sort((a,b)=>b.spent-a.spent);
+      if (sortBy==='recent') list.sort((a,b)=>b.last-a.last);
+      render(list);
+    }
+
+    document.getElementById('tokenFilter').addEventListener('input', applyControls);
+    document.getElementById('sortBy').addEventListener('change', applyControls);
+
+    render(sessions);
+    applyControls();
+
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
